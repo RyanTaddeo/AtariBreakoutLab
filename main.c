@@ -15,8 +15,8 @@
 #define GAME_WIN         2
 #define GAME_OVER        3
 
-#define BOOSTER_BUTTON   BIT2       /* J4.32 -> P4.2 */
-#define JOYSTICK_X_PIN   BIT2       /* J1.2  -> P1.2/A2 */
+#define BOOSTER_BUTTON   BIT2
+#define JOYSTICK_X_PIN   BIT2
 
 static Graphics_Context g_context;
 static Graphics_Rectangle g_blocks[MAX_BLOCKS];
@@ -54,6 +54,20 @@ static void Game_LoseLife(void);
 static void Game_StartNewGame(void);
 static void Game_AdvanceLevel(void);
 
+static void Buzzer_Init(void);
+static void Beep(unsigned int halfPeriodUs, unsigned int durationMs);
+
+#define BUZZ_DIR  P3DIR
+#define BUZZ_OUT  P3OUT
+#define BUZZ_BIT  BIT7
+#define BUZZ_SEL0 P3SEL0
+#define BUZZ_SEL1 P3SEL1
+
+#define JOY_CENTER        2048
+#define JOY_DEADZONE      400
+#define PADDLE_MAX_SPEED  6
+#define PADDLE_MAX_X      (127 - PADDLE_WIDTH)
+
 int main(void)
 {
     WDTCTL = WDTPW | WDTHOLD;
@@ -71,6 +85,8 @@ int main(void)
     Game_StartNewGame();
     Timer_Init();
 
+    Buzzer_Init();
+
     __enable_interrupt();
 
     while(1)
@@ -85,9 +101,32 @@ int main(void)
     }
 }
 
+static void Buzzer_Init(void)
+{
+    BUZZ_SEL0 &= ~BUZZ_BIT;
+    BUZZ_SEL1 &= ~BUZZ_BIT;
+    BUZZ_DIR  |=  BUZZ_BIT;
+    BUZZ_OUT  &= ~BUZZ_BIT;
+}
+
+static void Beep(unsigned int halfPeriodUs, unsigned int durationMs)
+{
+    unsigned long n = ((unsigned long)durationMs * 1000UL) / (2UL * halfPeriodUs);
+    unsigned int j;
+
+    while(n--)
+    {
+        BUZZ_OUT ^= BUZZ_BIT;
+        for(j = 0; j < halfPeriodUs; j++)
+        {
+            __delay_cycles(8);
+        }
+    }
+    BUZZ_OUT &= ~BUZZ_BIT;
+}
+
 static void Clock_Init(void)
 {
-    /* DCO = 8 MHz, MCLK = SMCLK = DCO. */
     CSCTL0_H = CSKEY_H;
     CSCTL1 = DCOFSEL_6;
     CSCTL2 = SELA__VLOCLK | SELS__DCOCLK | SELM__DCOCLK;
@@ -97,7 +136,6 @@ static void Clock_Init(void)
 
 static void Button_Init(void)
 {
-    /* BOOSTXL-EDUMKII S2: J4.32 -> P4.2, active low. */
     P4DIR &= ~BOOSTER_BUTTON;
     P4REN |= BOOSTER_BUTTON;
     P4OUT |= BOOSTER_BUTTON;
@@ -105,7 +143,6 @@ static void Button_Init(void)
 
 static void ADC_Init(void)
 {
-    /* BOOSTXL-EDUMKII joystick X: J1.2 -> P1.2/A2. */
     P1SEL0 |= JOYSTICK_X_PIN;
     P1SEL1 |= JOYSTICK_X_PIN;
 
@@ -127,7 +164,6 @@ static unsigned int ADC_ReadJoystickX(void)
 
 static void Timer_Init(void)
 {
-    /* SMCLK = 8 MHz, /8 = 1 MHz. 33333 counts ~= 30 Hz. */
     TA0CCR0 = 33333 - 1;
     TA0CCTL0 = CCIE;
     TA0CTL = TASSEL_2 | ID_3 | MC_1 | TACLR;
@@ -242,21 +278,27 @@ static void Game_Update(void)
 
 static void Game_UpdatePaddle(void)
 {
-    unsigned int adc;
-    unsigned int newX;
+    int diff = (int)ADC_ReadJoystickX() - JOY_CENTER;
+    int step = 0;
+    int newX;
 
-    adc = ADC_ReadJoystickX();
+    if(diff > JOY_DEADZONE)
+    {
+        step = 1 + ((diff - JOY_DEADZONE) * (PADDLE_MAX_SPEED - 1)) / (2048 - JOY_DEADZONE);
+    }
+    else if(diff < -JOY_DEADZONE)
+    {
+        step = -1 + ((diff + JOY_DEADZONE) * (PADDLE_MAX_SPEED - 1)) / (2048 - JOY_DEADZONE);
+    }
 
-    if(adc < 600) adc = 600;
-    if(adc > 3500) adc = 3500;
+    newX = (int)g_paddleX + step;
+    if(newX < 0) newX = 0;
+    if(newX > PADDLE_MAX_X) newX = PADDLE_MAX_X;
 
-    newX = (unsigned int)(((unsigned long)(adc - 600) *
-             (unsigned long)(127 - PADDLE_WIDTH)) / 2900UL);
-
-    if(newX != g_paddleX)
+    if((unsigned int)newX != g_paddleX)
     {
         Draw_Paddle(&g_context, g_paddleX, GRAPHICS_COLOR_BLACK);
-        g_paddleX = newX;
+        g_paddleX = (unsigned int)newX;
         Draw_Paddle(&g_context, g_paddleX, GRAPHICS_COLOR_RED);
     }
 }
@@ -367,6 +409,9 @@ static void Game_UpdateBall(void)
     if(g_activeBlocks == 0)
     {
         g_state = GAME_WIN;
+        Beep(600, 100);
+        Beep(450, 100);
+        Beep(300, 200);
         Draw_ModalBox(&g_context, "You Win!", "Press S2", 1, g_score);
     }
 }
@@ -375,12 +420,16 @@ static void Game_LoseLife(void)
 {
     if(g_lives > 0)
     {
+        Beep(800,200);
         g_lives--;
     }
 
     if(g_lives == 0)
     {
         g_state = GAME_OVER;
+        Beep(1000, 200);
+        Beep(1200, 200);
+        Beep(1400, 200);
         Draw_ModalBox(&g_context, "Game Over!", "Press S2", 1, g_score);
         return;
     }
