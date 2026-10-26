@@ -68,6 +68,11 @@ static void Beep(unsigned int halfPeriodUs, unsigned int durationMs);
 #define PADDLE_MAX_SPEED  6
 #define PADDLE_MAX_X      (127 - PADDLE_WIDTH)
 
+#define MODE_BUTTON      BIT3
+
+unsigned char g_hardMode = 0;
+static unsigned char g_lastMode = 0;
+
 int main(void)
 {
     WDTCTL = WDTPW | WDTHOLD;
@@ -125,6 +130,11 @@ static void Beep(unsigned int halfPeriodUs, unsigned int durationMs)
     BUZZ_OUT &= ~BUZZ_BIT;
 }
 
+static void Rest(unsigned int ms)
+{
+    while(ms--) __delay_cycles(8000);     // 1 ms at 8 MHz
+}
+
 static void Clock_Init(void)
 {
     CSCTL0_H = CSKEY_H;
@@ -139,6 +149,10 @@ static void Button_Init(void)
     P4DIR &= ~BOOSTER_BUTTON;
     P4REN |= BOOSTER_BUTTON;
     P4OUT |= BOOSTER_BUTTON;
+
+    P4DIR &= ~MODE_BUTTON;
+    P4REN |= MODE_BUTTON;
+    P4OUT |= MODE_BUTTON;
 }
 
 static void ADC_Init(void)
@@ -208,6 +222,8 @@ static void Game_LoadLevel(unsigned char levelNumber)
 
     g_paddleX = (127 - PADDLE_WIDTH) / 2;
     g_state = GAME_READY;
+    /*Hard mode: shorten the frame period by 3000 us each level. */
+    TA0CCR0 = (g_hardMode ? (33333 - 3000 * levelNumber) : 33333) - 1;
     Game_ResetBall();
 
     Draw_Playspace(&g_context,
@@ -238,6 +254,17 @@ static void Game_Update(void)
     button = Button_IsPressed();
     newPress = (unsigned char)(button && !g_lastButton);
     g_lastButton = button;
+    {
+        unsigned char modeBtn = (unsigned char)((P4IN & MODE_BUTTON) == 0);
+
+        if(modeBtn && !g_lastMode &&
+           g_state == GAME_READY && g_levelNumber == 0 && g_score == 0)
+        {
+            g_hardMode ^= 1;
+            Game_LoadLevel(g_levelNumber);
+        }
+        g_lastMode = modeBtn;
+    }
 
     if(g_state == GAME_WIN)
     {
@@ -385,6 +412,7 @@ static void Game_UpdateBall(void)
                 g_activeBlocks--;
             }
             g_score++;
+            Beep(400, 15);
 
             if(blockCollision & (COLLIDING_EAST | COLLIDING_WEST))
             {
@@ -409,9 +437,12 @@ static void Game_UpdateBall(void)
     if(g_activeBlocks == 0)
     {
         g_state = GAME_WIN;
-        Beep(600, 100);
-        Beep(450, 100);
-        Beep(300, 200);
+        Beep(956, 90);   Rest(20);
+        Beep(759, 90);   Rest(20);
+        Beep(638, 90);   Rest(20);
+        Beep(478, 180);  Rest(60);
+        Beep(638, 90);   Rest(20);
+        Beep(478, 400);
         Draw_ModalBox(&g_context, "You Win!", "Press S2", 1, g_score);
     }
 }
@@ -427,9 +458,11 @@ static void Game_LoseLife(void)
     if(g_lives == 0)
     {
         g_state = GAME_OVER;
-        Beep(1000, 200);
-        Beep(1200, 200);
-        Beep(1400, 200);
+        Beep(1276, 200); Rest(40);
+        Beep(1433, 200); Rest(40);
+        Beep(1515, 200); Rest(40);
+        Beep(1701, 200); Rest(40);
+        Beep(1908, 600);
         Draw_ModalBox(&g_context, "Game Over!", "Press S2", 1, g_score);
         return;
     }
@@ -453,11 +486,35 @@ static void Game_AdvanceLevel(void)
     g_levelNumber++;
     if(g_levelNumber >= NUM_LEVELS)
     {
+        Graphics_Rectangle full = { 0, 0, 127, 127 };
+
         g_levelNumber = 0;
+        g_state = GAME_OVER;        // S2 now starts a new game
+
+        Graphics_setForegroundColor(&g_context, GRAPHICS_COLOR_YELLOW);
+        Graphics_fillRectangle(&g_context, &full);
+        Draw_ModalBox(&g_context, "CHAMPION!", "Press S2", 1, g_score);
+
+        Beep(956, 120);  Rest(20);
+        Beep(759, 120);  Rest(20);
+        Beep(638, 120);  Rest(20);
+        Beep(478, 240);  Rest(40);
+        Beep(715, 120);  Rest(20);
+        Beep(568, 120);  Rest(20);
+        Beep(478, 240);  Rest(40);
+        Beep(638, 120);  Rest(20);
+        Beep(478, 120);  Rest(20);
+        Beep(380, 240);  Rest(40);
+        Beep(478, 120);  Rest(20);
+        Beep(380, 120);  Rest(20);
+        Beep(319, 700);
+        return;
     }
 
-    /* Give a fresh set of lives for each new level. */
-    g_lives = 3;
+    if(!g_hardMode)
+    {
+        g_lives = 3;
+    }
     Game_LoadLevel(g_levelNumber);
 }
 

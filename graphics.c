@@ -5,6 +5,9 @@ static void UIntToText(unsigned int value, char *buffer);
 static void MakeLevelText(unsigned char levelNumber, char *buffer);
 static void MakePointsText(unsigned int points, char *buffer);
 
+extern unsigned char g_hardMode;
+
+
 void Initialize_Graphics(Graphics_Context *context)
 {
     Crystalfontz128x128_SetOrientation(LCD_ORIENTATION_UP);
@@ -46,6 +49,11 @@ void Draw_Playspace(Graphics_Context *context,
                                 64,
                                 123,
                                 OPAQUE_TEXT);
+    if(g_hardMode)
+    {
+        Graphics_drawStringCentered(context, (int8_t *)"HARD",
+                                    AUTO_STRING_LENGTH, 108, 123, OPAQUE_TEXT);
+    }
 
     for(i = 0; i < lives; i++)
     {
